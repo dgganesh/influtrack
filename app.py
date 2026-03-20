@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 from bson import ObjectId
 from flask import render_template
+from collections import defaultdict
 
 # Load environment variables
 load_dotenv()
@@ -47,7 +48,7 @@ def add_campaign():
 def get_campaigns():
     campaigns = []
 
-    for campaign in campaigns_collection.find():
+    for campaign in campaigns_collection.find({"status": {"$ne": "completed"}}):
         campaign["_id"] = str(campaign["_id"])  # convert ObjectId to string
         campaigns.append(campaign)
 
@@ -84,7 +85,14 @@ def dashboard():
     for campaign in campaigns_collection.find():
         campaign["_id"] = str(campaign["_id"])
 
-        # 🔥 Get all expenses for this campaign
+        # 🔥 Normalize status
+        status = campaign.get("status", "").strip().lower()
+
+        # ❌ Skip completed campaigns
+        if status == "completed":
+            continue
+
+        # Expenses logic
         expenses_cursor = expenses_collection.find({"campaign_id": campaign["_id"]})
 
         expenses = []
@@ -103,7 +111,6 @@ def dashboard():
 
     return render_template("index.html", campaigns=campaigns)
 
-
 # 💰 ADD EXPENSE
 @app.route('/add_expense', methods=['POST'])
 def add_expense():
@@ -119,6 +126,79 @@ def add_expense():
     expenses_collection.insert_one(expense)
 
     return jsonify({"message": "Expense added successfully"}), 201
+
+@app.route('/completed')
+def completed_campaigns():
+    campaigns = []
+
+    for campaign in campaigns_collection.find():
+        campaign["_id"] = str(campaign["_id"])
+
+        status = campaign.get("status", "").strip().lower()
+
+        # ✅ Only include completed
+        if status != "completed":
+            continue
+
+        expenses_cursor = expenses_collection.find({"campaign_id": campaign["_id"]})
+
+        total_expense = 0
+        for exp in expenses_cursor:
+            total_expense += int(exp.get("amount", 0))
+
+        campaign["total_expense"] = total_expense
+
+        campaigns.append(campaign)
+
+    return render_template("completed.html", campaigns=campaigns)
+
+@app.route('/reports')
+def reports():
+    monthly_data = defaultdict(lambda: {
+        "income": 0,
+        "expense": 0
+    })
+
+    for campaign in campaigns_collection.find():
+        status = campaign.get("status", "").strip().lower()
+
+        # ✅ Only completed campaigns
+        if status != "completed":
+            continue
+
+        campaign_id = str(campaign["_id"])
+
+        # 🧠 Extract month from date
+        date = campaign.get("due_date", "")
+        month = date[:7]  # "2026-03"
+
+        # 💰 Add income
+        income = int(campaign.get("amount", 0))
+        monthly_data[month]["income"] += income
+
+        # 💸 Add expenses
+        expenses_cursor = expenses_collection.find({"campaign_id": campaign_id})
+
+        for exp in expenses_cursor:
+            monthly_data[month]["expense"] += int(exp.get("amount", 0))
+
+    # 🧾 Convert to list for template
+    reports_list = []
+
+    for month, data in monthly_data.items():
+        reports_list.append({
+            "month": month,
+            "income": data["income"],
+            "expense": data["expense"],
+            "profit": data["income"] - data["expense"]
+        })
+
+    # 🔥 Sort by latest month first
+    reports_list.sort(key=lambda x: x["month"], reverse=True)
+
+    return render_template("reports.html", reports=reports_list)
+
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
