@@ -2,3 +2,5 @@ flask
 pymongo
 python-dotenv
 gunicorn
+bcrypt
+flask-session

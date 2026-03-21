@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Panel</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="container mt-5">
+
+<h2>Admin Panel - Reset User Password</h2>
+
+<a href="/dashboard" class="btn btn-secondary mb-3">← Back</a>
+
+<form method="POST">
+
+    <label>Select User</label>
+    <select class="form-control mb-2" name="username" required>
+        {% for u in users %}
+            <option value="{{ u.username }}">{{ u.username }}</option>
+        {% endfor %}
+    </select>
+
+    <label>New Password</label>
+    <input class="form-control mb-3" name="password" type="password" required>
+
+    <button class="btn btn-danger">Reset Password</button>
+
+</form>
+
+</body>
+</html>

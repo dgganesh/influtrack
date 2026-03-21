@@ -1,15 +1,26 @@
 from flask import Flask, request, jsonify
 from pymongo import MongoClient
 import os
+import bcrypt
+from flask import session, redirect, url_for
+from flask_session import Session
 from dotenv import load_dotenv
 from bson import ObjectId
 from flask import render_template
 from collections import defaultdict
+from flask import session, redirect, url_for
+from flask_session import Session
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
+app.config["SESSION_PERMANENT"] = False
+app.config["SESSION_TYPE"] = "filesystem"
+
+Session(app)
+
+ADMIN_USER = "admin"
 
 # MongoDB Connection
 MONGO_URI = os.getenv("MONGO_URI")
@@ -18,16 +29,64 @@ client = MongoClient(MONGO_URI)
 db = client["influencer_db"]
 campaigns_collection = db["campaigns"]
 expenses_collection = db["expenses"]
+users_collection = db["users"]
 
 @app.route('/')
 def home():
     return "Influencer Tracker Backend Running 🚀"
 
 
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        # Check if user exists
+        if users_collection.find_one({"username": username}):
+            return "User already exists!"
+
+        # Hash password
+        hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+
+        users_collection.insert_one({
+            "username": username,
+            "password": hashed_pw
+        })
+
+        return redirect(url_for('login'))
+
+    return render_template("register.html")
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        user = users_collection.find_one({"username": username})
+
+        if user and bcrypt.checkpw(password.encode('utf-8'), user['password']):
+            session['user'] = username
+            return redirect(url_for('dashboard'))
+        else:
+            return "Invalid credentials!"
+
+    return render_template("login.html")
+
+@app.route('/logout')
+def logout():
+    session.pop('user', None)
+    return redirect(url_for('login'))
+
+
+
+
 # 🔥 CREATE CAMPAIGN API
 @app.route('/add_campaign', methods=['POST'])
 def add_campaign():
     data = request.json
+    user = session['user']
 
     campaign = {
         "name": data.get("name"),
@@ -36,7 +95,8 @@ def add_campaign():
         "status": data.get("status", "planned"),
         "payment_status": data.get("payment_status", "pending"),
         "amount": int(data.get("amount", 0)),
-        "due_date": data.get("due_date")
+        "due_date": data.get("due_date"),
+        "user_id": user
     }
 
     campaigns_collection.insert_one(campaign)
@@ -80,9 +140,13 @@ def update_campaign(campaign_id):
 # 🖥️ DASHBOARD UI
 @app.route('/dashboard')
 def dashboard():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
     campaigns = []
 
-    for campaign in campaigns_collection.find():
+    user = session['user']
+    for campaign in campaigns_collection.find({"user_id": user}):
         campaign["_id"] = str(campaign["_id"])
 
         # 🔥 Normalize status
@@ -115,12 +179,14 @@ def dashboard():
 @app.route('/add_expense', methods=['POST'])
 def add_expense():
     data = request.json
+    user = session['user']
 
     expense = {
         "campaign_id": data.get("campaign_id"),
         "title": data.get("title"),
         "amount": int(data.get("amount", 0)),
-        "date": data.get("date")
+        "date": data.get("date"),
+        "user_id": user
     }
 
     expenses_collection.insert_one(expense)
@@ -131,7 +197,8 @@ def add_expense():
 def completed_campaigns():
     campaigns = []
 
-    for campaign in campaigns_collection.find():
+    user = session['user']
+    for campaign in campaigns_collection.find({"user_id": user}):
         campaign["_id"] = str(campaign["_id"])
 
         status = campaign.get("status", "").strip().lower()
@@ -152,6 +219,32 @@ def completed_campaigns():
 
     return render_template("completed.html", campaigns=campaigns)
 
+@app.route('/admin', methods=['GET', 'POST'])
+def admin_panel():
+
+    # 🔐 Allow only admin
+    if 'user' not in session or session['user'] != ADMIN_USER:
+        return "Unauthorized"
+
+    if request.method == 'POST':
+        username = request.form['username']
+        new_password = request.form['password']
+
+        hashed_pw = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
+
+        users_collection.update_one(
+            {"username": username},
+            {"$set": {"password": hashed_pw}}
+        )
+
+        return "Password updated successfully!"
+
+    # Get all users
+    users = users_collection.find({}, {"username": 1})
+
+    return render_template("admin.html", users=users)
+
+
 @app.route('/reports')
 def reports():
     monthly_data = defaultdict(lambda: {
@@ -159,7 +252,8 @@ def reports():
         "expense": 0
     })
 
-    for campaign in campaigns_collection.find():
+    user = session['user']
+    for campaign in campaigns_collection.find({"user_id": user}):
         status = campaign.get("status", "").strip().lower()
 
         # ✅ Only completed campaigns
@@ -177,7 +271,12 @@ def reports():
         monthly_data[month]["income"] += income
 
         # 💸 Add expenses
-        expenses_cursor = expenses_collection.find({"campaign_id": campaign_id})
+        user = session['user']  # 🔥 ADD THIS
+
+        expenses_cursor = expenses_collection.find({
+            "campaign_id": campaign_id,
+            "user_id": user  # 🔥 ADD THIS FILTER
+        })
 
         for exp in expenses_cursor:
             monthly_data[month]["expense"] += int(exp.get("amount", 0))

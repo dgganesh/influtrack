@@ -54,6 +54,14 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0">Dashboard</h4>
+{% if session['user'] == 'admin' %}
+    <a href="/admin" class="btn btn-warning">Admin Panel</a>
+{% endif %}
+
+        <div>
+        <span class="me-2">Logged in as: {{ session['user'] }}</span>
+        <a href="/logout" class="btn btn-danger btn-sm">Logout</a>
+        </div>
 
     <div class="d-flex gap-2">
         <a href="/completed" class="btn btn-outline-secondary">
